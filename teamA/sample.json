@@ -1,0 +1,572 @@
+{
+  "name": "team-a_complex-pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "team-a/ingest",
+        "responseMode": "onReceived",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "c2b3a9d1-3b3f-4b7c-8b7f-4bdf7b9f2a01",
+      "name": "Webhook Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [-900, -40]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            { "name": "source", "value": "webhook" },
+            { "name": "requestId", "value": "={{$json[\"headers\"][\"x-request-id\"] || $json[\"query\"][\"requestId\"] || $execution.id}}" }
+          ],
+          "boolean": [{ "name": "dryRun", "value": "={{!!$json[\"query\"][\"dryRun\"]}}" }],
+          "number": [{ "name": "receivedAt", "value": "={{Date.now()}}" }]
+        },
+        "options": {}
+      },
+      "id": "d5b6c9ef-2d2f-4cfe-9c60-66c1b4a14f2b",
+      "name": "Normalize Envelope",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [-660, -40]
+    },
+    {
+      "parameters": {
+        "functionCode": "/*\n  Simulate enrichment + validation.\n  - validates payload\n  - computes priority\n  - normalizes customer key\n*/\nconst payload = $json.body || {};\nconst errors = [];\nif (!payload.eventType) errors.push('eventType missing');\nif (!payload.customer || !payload.customer.email) errors.push('customer.email missing');\nconst eventType = payload.eventType || 'unknown';\nconst email = (payload.customer?.email || '').trim().toLowerCase();\nconst amount = Number(payload.amount || 0);\nconst priority = amount >= 1000 ? 'high' : amount >= 100 ? 'medium' : 'low';\nreturn [{\n  meta: {\n    requestId: $json.requestId,\n    receivedAt: $json.receivedAt,\n    dryRun: $json.dryRun,\n    errors,\n  },\n  data: {\n    eventType,\n    amount,\n    currency: payload.currency || 'USD',\n    customer: {\n      email,\n      name: payload.customer?.name || null,\n      id: payload.customer?.id || null,\n    },\n    tags: payload.tags || [],\n    raw: payload,\n    priority,\n  }\n}];"
+      },
+      "id": "75dd04e1-7e4f-4d44-9d5c-2baf4e033c11",
+      "name": "Validate & Enrich",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [-420, -40]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.meta.errors.length}}",
+              "operation": "notEqual",
+              "value2": "0"
+            }
+          ]
+        }
+      },
+      "id": "82b9d6ae-ea2d-4a7a-8c4e-2a4a2b0d4f22",
+      "name": "IF Invalid Payload",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-190, -40]
+    },
+    {
+      "parameters": {
+        "channel": "#alerts",
+        "text": "={{`[team-a] Invalid payload: requestId=${$json.meta.requestId}\\nerrors=${JSON.stringify($json.meta.errors)}\\nemail=${$json.data.customer.email}`}}",
+        "otherOptions": {}
+      },
+      "id": "bdbef1c9-4f0f-4b74-a1d9-9af7d4e9d9a2",
+      "name": "Slack Alert Invalid",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [60, -180]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": "SHEET_ID_PLACEHOLDER",
+        "sheetName": "invalid_events",
+        "keyColumn": "requestId",
+        "options": {},
+        "dataToSend": "={{ {\n  requestId: $json.meta.requestId,\n  receivedAt: new Date($json.meta.receivedAt).toISOString(),\n  email: $json.data.customer.email,\n  errors: JSON.stringify($json.meta.errors),\n  eventType: $json.data.eventType\n} }}"
+      },
+      "id": "d4b06e53-20d5-4b17-8b0b-06f2aa7e9d71",
+      "name": "Sheets Log Invalid",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [320, -180]
+    },
+    {
+      "parameters": {},
+      "id": "1f72d8fe-3949-4a27-9a1e-0552b88f73d9",
+      "name": "Stop (Invalid)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [560, -180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{$json.meta.dryRun}}", "operation": "isTrue" }]
+        }
+      },
+      "id": "4c0ec1f2-7a83-4d3b-8ef3-71bbdcf5e61b",
+      "name": "IF Dry Run",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "channel": "#ops",
+        "text": "={{`[team-a] DRY RUN received requestId=${$json.meta.requestId}, eventType=${$json.data.eventType}, priority=${$json.data.priority}`}}"
+      },
+      "id": "b1c10a9a-7a6d-4c6f-bf40-3d9c6fb4a7ef",
+      "name": "Slack DryRun Notice",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [320, 180]
+    },
+    {
+      "parameters": {},
+      "id": "9f8e4a20-3f63-4e0c-bc96-1a8b86b0a5b2",
+      "name": "Stop (DryRun)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [560, 180]
+    },
+    {
+      "parameters": {
+        "value": "={{$json.data.eventType}}",
+        "rules": [
+          { "operation": "equal", "value": "purchase", "output": 0 },
+          { "operation": "equal", "value": "refund", "output": 1 },
+          { "operation": "equal", "value": "signup", "output": 2 }
+        ],
+        "fallbackOutput": 3
+      },
+      "id": "fa8d0c1b-3a4f-4c0f-8a2b-6937d1b7f4e9",
+      "name": "Switch eventType",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [320, 60]
+    },
+    {
+      "parameters": {
+        "query": "INSERT INTO events (request_id, event_type, email, amount, currency, priority, received_at)\nVALUES ({{$json.meta.requestId}}, {{$json.data.eventType}}, {{$json.data.customer.email}}, {{$json.data.amount}}, {{$json.data.currency}}, {{$json.data.priority}}, to_timestamp({{$json.meta.receivedAt}}/1000.0))\nON CONFLICT (request_id) DO NOTHING;",
+        "options": {}
+      },
+      "id": "0f9fd4c9-0c8f-4c72-9d07-0aa9b2a5e201",
+      "name": "DB Insert Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [560, 60]
+    },
+    {
+      "parameters": {
+        "url": "https://example.internal/api/score",
+        "method": "POST",
+        "sendBody": true,
+        "jsonBody": "={{ { email: $json.data.customer.email, amount: $json.data.amount, eventType: $json.data.eventType } }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "f3d09f5b-4f15-4f58-8a2b-5e8bba1b1a3d",
+      "name": "HTTP Score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [800, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.score || $json.body?.score || 0}}",
+              "operation": "largerEqual",
+              "value2": 80
+            }
+          ]
+        }
+      },
+      "id": "c6b74c55-3b3b-4a6a-9f79-9cf8afef8d81",
+      "name": "IF High Score",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1040, 60]
+    },
+    {
+      "parameters": {
+        "channel": "#sales",
+        "text": "={{`[team-a] HOT LEAD: ${$json.data.customer.email} score=${$json.score || $json.body?.score} amount=${$json.data.amount}`}}"
+      },
+      "id": "d2c7c0d4-4a18-4f49-8b4c-4dcf13b2b7ae",
+      "name": "Slack HighScore",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1280, -40]
+    },
+    {
+      "parameters": {
+        "waitFor": "timeInterval",
+        "unit": "seconds",
+        "amount": 10
+      },
+      "id": "fe0d9de4-e6a5-4f0e-8a2a-4b1fa8f0a2e8",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1280, 160]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByIndex"
+      },
+      "id": "d0f6f6e5-3c68-4d2a-9ce9-7c6e0b8db7c1",
+      "name": "Merge Lead + Delay",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1520, 60]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "SHEET_ID_PLACEHOLDER",
+        "sheetName": "processed_events",
+        "options": {},
+        "dataToSend": "={{ {\n  requestId: $json.meta.requestId,\n  receivedAt: new Date($json.meta.receivedAt).toISOString(),\n  eventType: $json.data.eventType,\n  email: $json.data.customer.email,\n  amount: $json.data.amount,\n  currency: $json.data.currency,\n  priority: $json.data.priority,\n  score: $json.score || $json.body?.score || null\n} }}"
+      },
+      "id": "e1f8dbfb-3a5b-4b28-a3b4-9a2d6a1e8d0d",
+      "name": "Sheets Log Processed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1760, 60]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "9a2e1c3e-0a3c-4b57-b0d4-2e0d6de9a111",
+      "name": "Split In Batches (Sim)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 2,
+      "position": [2000, 60]
+    },
+    {
+      "parameters": {
+        "functionCode": "/* simulate downstream fan-out */\nreturn items.map((item, i) => ({ json: { ...item.json, batchIndex: i } }));"
+      },
+      "id": "22c2e74a-41b0-4e8b-81a0-9f5cdd9b22b1",
+      "name": "Fan-out",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [2240, 60]
+    },
+    {
+      "parameters": {
+        "channel": "#ops",
+        "text": "={{`[team-a] DONE requestId=${$json.meta.requestId} eventType=${$json.data.eventType} email=${$json.data.customer.email}`}}"
+      },
+      "id": "f1c7e37f-0fa4-48d1-9e4c-2c0b7e1b9a44",
+      "name": "Slack Done",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [2480, 60]
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{`Unhandled eventType=${$json.data.eventType} requestId=${$json.meta.requestId}`}}"
+      },
+      "id": "6fcd8c0d-2f2e-4c6d-a0a9-84b4f2bdb2a9",
+      "name": "Unknown Event Handler",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [560, -220]
+    },
+    {
+      "parameters": {},
+      "id": "c0a2a0ff-0b37-4fe9-9f4d-cc5d9d1e4e2e",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-420, 260]
+    },
+    {
+      "parameters": {
+        "channel": "#alerts",
+        "text": "={{`[team-a] WORKFLOW ERROR: ${$json.execution?.error?.message || 'unknown'}\\nworkflow=${$json.workflow?.name || 'n/a'}\\nexecutionId=${$json.execution?.id || 'n/a'}`}}"
+      },
+      "id": "b0c8d8d9-7b4b-4e0a-9d14-2a3d7f0a1b0c",
+      "name": "Slack Error Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [-190, 260]
+    }
+  ],
+  "connections": {
+    "Webhook Ingest": {
+      "main": [
+        [
+          {
+            "node": "Normalize Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Envelope": {
+      "main": [
+        [
+          {
+            "node": "Validate & Enrich",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Enrich": {
+      "main": [
+        [
+          {
+            "node": "IF Invalid Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Invalid Payload": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Dry Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alert Invalid": {
+      "main": [
+        [
+          {
+            "node": "Sheets Log Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Log Invalid": {
+      "main": [
+        [
+          {
+            "node": "Stop (Invalid)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Dry Run": {
+      "main": [
+        [
+          {
+            "node": "Slack DryRun Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch eventType",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack DryRun Notice": {
+      "main": [
+        [
+          {
+            "node": "Stop (DryRun)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch eventType": {
+      "main": [
+        [
+          {
+            "node": "DB Insert Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Insert Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Insert Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unknown Event Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert Event": {
+      "main": [
+        [
+          {
+            "node": "HTTP Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Score": {
+      "main": [
+        [
+          {
+            "node": "IF High Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF High Score": {
+      "main": [
+        [
+          {
+            "node": "Slack HighScore",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack HighScore": {
+      "main": [
+        [
+          {
+            "node": "Merge Lead + Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          {
+            "node": "Merge Lead + Delay",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Lead + Delay": {
+      "main": [
+        [
+          {
+            "node": "Sheets Log Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Log Processed": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (Sim)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches (Sim)": {
+      "main": [
+        [
+          {
+            "node": "Fan-out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan-out": {
+      "main": [
+        [
+          {
+            "node": "Slack Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Slack Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 3600,
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "timezone": "Asia/Seoul",
+    "errorWorkflow": ""
+  },
+  "versionId": "7d4c2c1f-9c92-4e0f-bab1-5b8fd7a3b2d9",
+  "id": "team-a-sample-001",
+  "meta": {
+    "instanceId": "viewer-sample"
+  },
+  "pinData": {},
+  "staticData": {}
+}
