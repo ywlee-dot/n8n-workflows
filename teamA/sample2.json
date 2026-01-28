@@ -1,0 +1,112 @@
+  {
+    "name": "sample CLI Flow (generate_dataset_summary.py)",
+    "nodes": [
+      {
+        "parameters": {},
+        "id": "1",
+        "name": "Start",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [200, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// parse args: --input, --output, --sheet, --header-start/end, --group-key, --org-name, --sleep, --include-row, --debug, --base-url, --model\nreturn items;"
+        },
+        "id": "2",
+        "name": "Parse Args",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [430, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// load env: GEMINI_API_KEY or OPENAI_API_KEY\n// validate api key existence\nreturn items;"
+        },
+        "id": "3",
+        "name": "Load Env",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [660, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// read rows from input (.csv or .xlsx)\n// auto header detect or manual header range\nreturn items;"
+        },
+        "id": "4",
+        "name": "Read Input Rows",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [900, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// pick group key (explicit or auto)\n// group rows\nreturn items;"
+        },
+        "id": "5",
+        "name": "Group Rows",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [1140, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// build prompt text from group + prompt.txt template\nreturn items;"
+        },
+        "id": "6",
+        "name": "Build Prompt",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [1380, 300]
+      },
+      {
+        "parameters": {
+          "url": "={{$json.baseUrl || $env.OPENAI_BASE_URL || $env.GEMINI_BASE_URL}}",
+          "method": "POST",
+          "sendBody": true,
+          "jsonParameters": true,
+          "options": {
+            "timeout": 60000
+          },
+          "bodyParametersJson": "={{$json.llmPayload}}"
+        },
+        "id": "7",
+        "name": "Call LLM",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4,
+        "position": [1620, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// parse JSON response, build result item\n// include columns/common/keywords/description\nreturn items;"
+        },
+        "id": "8",
+        "name": "Build Result",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [1860, 300]
+      },
+      {
+        "parameters": {
+          "functionCode": "// write output.json (array)\nreturn items;"
+        },
+        "id": "9",
+        "name": "Write Output",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 2,
+        "position": [2100, 300]
+      }
+    ],
+    "connections": {
+      "Start": { "main": [[{ "node": "Parse Args", "type": "main", "index": 0 }]] },
+      "Parse Args": { "main": [[{ "node": "Load Env", "type": "main", "index": 0 }]] },
+      "Load Env": { "main": [[{ "node": "Read Input Rows", "type": "main", "index": 0 }]] },
+      "Read Input Rows": { "main": [[{ "node": "Group Rows", "type": "main", "index": 0 }]] },
+      "Group Rows": { "main": [[{ "node": "Build Prompt", "type": "main", "index": 0 }]] },
+      "Build Prompt": { "main": [[{ "node": "Call LLM", "type": "main", "index": 0 }]] },
+      "Call LLM": { "main": [[{ "node": "Build Result", "type": "main", "index": 0 }]] },
+      "Build Result": { "main": [[{ "node": "Write Output", "type": "main", "index": 0 }]] }
+    },
+    "active": false,
+    "versionId": "sample-cli-flow"
+  }
